@@ -1,21 +1,28 @@
 [
   {
-    "id": "1",
+    "id": 1,
+    "campaign_id": 1,
     "type": "text",
     "content": "Try our Go microframework today!",
+    "redirect_url": "https://exaample.com/ad1",
     "tags": ["developer", "go", "backend"]
   },
   {
-    "id": "2",
+    "id": 2,
+    "campaign_id": 1,
     "type": "image",
     "content": "",
     "image_url": "https://cdn.example.com/ads/coffee-banner.jpg",
+    "redirect_url": "https://exaample.com/ad2",
     "tags": ["vegan", "soy-free", "coffee"]
   },
   {
-    "id": "3",
+    "id": 3,
+    "campaign_id": 1,
     "type": "text",
     "content": "Ethically sourced clothing for modern humans.",
-    "tags": ["organic", "fair-trade", "woman-owned"]
+    "redirect_url": "https://exaample.com/ad3",
+    "tags": ["organic", "fair-trade", "woman-owned"],
+    "expires_at": "2025-10-17T15:39:22Z"
   }
 ]

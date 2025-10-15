@@ -1,225 +1,291 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand"
+	"net"
 	"net/http"
 	"os"
 	"strings"
 	"sync"
 	"time"
+
+	_ "github.com/mattn/go-sqlite3"
 )
 
-// Configuration
+// Config
 const (
-	adsFile        = "ads.json"
+	dbFile         = "ads.db"
+	adsJSONFile    = "ads.json"
 	apiTokenEnvVar = "ADSERVER_API_TOKEN"
 )
 
-// Ad represents one advertisement
-type Ad struct {
-	ID       string   `json:"id"`
-	Type     string   `json:"type"` // "text" or "image"
-	Content  string   `json:"content,omitempty"`
-	ImageURL string   `json:"image_url,omitempty"`
-	Tags     []string `json:"tags,omitempty"`
-}
-
 var (
-	ads []Ad
-	mu  sync.RWMutex
+	db *sql.DB
+	mu sync.Mutex
 )
 
-// Allowed origins for GET requests
-var allowedOrigins = []string{
-	"https://your-frontend-site.com",
-	"https://partner1.com",
-	"http://localhost:8000",
+// Ad struct for JSON import/export
+type Ad struct {
+	ID          int       `json:"id,omitempty"`
+	CampaignID  int       `json:"campaign_id,omitempty"`
+	Type        string    `json:"type"`
+	Content     string    `json:"content,omitempty"`
+	ImageURL    string    `json:"image_url,omitempty"`
+	RedirectURL string    `json:"redirect_url,omitempty"`
+	Tags        []string  `json:"tags,omitempty"`
+	ExpiresAt   time.Time `json:"expires_at,omitempty"`
 }
 
 func main() {
 	rand.Seed(time.Now().UnixNano())
+	var err error
 
-	if err := loadAds(); err != nil {
-		log.Fatalf("failed to load ads: %v", err)
+	// Initialize DB
+	db, err = sql.Open("sqlite3", dbFile)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+
+	if err := initDB(); err != nil {
+		log.Fatalf("DB init error: %v", err)
 	}
 
-	http.HandleFunc("/api/ad/random", withCORS(handleRandomAd))
+	// Load ads from JSON if provided
+	if _, err := os.Stat(adsJSONFile); err == nil {
+		if err := loadAdsFromJSON(); err != nil {
+			log.Printf("Warning: could not import ads.json: %v", err)
+		}
+	}
+
+	http.HandleFunc("/api/ad/random", handleRandomAd)
 	http.HandleFunc("/api/ad/add", requireAuth(handleAddAd))
-	http.HandleFunc("/api/ad/reload", requireAuth(withCORS(handleReloadAds)))
+	http.HandleFunc("/api/ad/click", handleAdClick)
+	http.HandleFunc("/api/ad/reload", requireAuth(handleReloadFromJSON))
 
 	addr := ":8080"
 	fmt.Printf("Ad server running on http://localhost%s\n", addr)
 	log.Fatal(http.ListenAndServe(addr, nil))
 }
 
-// ---------- Core logic ----------
+// ---------- DB Setup ----------
 
-func loadAds() error {
-	mu.Lock()
-	defer mu.Unlock()
+func initDB() error {
+	schema := `
+CREATE TABLE IF NOT EXISTS campaigns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 
-	f, err := os.Open(adsFile)
+CREATE TABLE IF NOT EXISTS ads (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    campaign_id INTEGER REFERENCES campaigns(id),
+    type TEXT,
+    content TEXT,
+    image_url TEXT,
+    redirect_url TEXT,
+    tags TEXT,
+    expires_at DATETIME
+);
+
+CREATE TABLE IF NOT EXISTS impressions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ad_id INTEGER REFERENCES ads(id),
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    ip TEXT
+);
+`
+	_, err := db.Exec(schema)
+	return err
+}
+
+// ---------- JSON import ----------
+
+func loadAdsFromJSON() error {
+	f, err := os.Open(adsJSONFile)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 
-	var data []Ad
-	if err := json.NewDecoder(f).Decode(&data); err != nil {
+	var ads []Ad
+	if err := json.NewDecoder(f).Decode(&ads); err != nil {
 		return err
 	}
 
-	ads = data
-	log.Printf("Loaded %d ads from %s", len(ads), adsFile)
-	return nil
-}
-
-func saveAds() error {
-	mu.RLock()
-	defer mu.RUnlock()
-
-	data, err := json.MarshalIndent(ads, "", "  ")
+	tx, err := db.Begin()
 	if err != nil {
 		return err
 	}
+	defer tx.Rollback()
 
-	return os.WriteFile(adsFile, data, 0644)
+	stmt, err := tx.Prepare(`
+        INSERT INTO ads (campaign_id, type, content, image_url, redirect_url, tags, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    `)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, ad := range ads {
+		tagsJSON, _ := json.Marshal(ad.Tags)
+		var exp *string
+		if !ad.ExpiresAt.IsZero() {
+			formatted := ad.ExpiresAt.Format(time.RFC3339)
+			exp = &formatted
+		}
+		_, err := stmt.Exec(ad.CampaignID, ad.Type, ad.Content, ad.ImageURL, ad.RedirectURL, string(tagsJSON), exp)
+		if err != nil {
+			log.Printf("Failed to import ad: %v", err)
+		}
+	}
+
+	return tx.Commit()
 }
 
-// ---------- Middleware ----------
+func handleReloadFromJSON(w http.ResponseWriter, r *http.Request) {
+	if err := loadAdsFromJSON(); err != nil {
+		http.Error(w, "reload failed: "+err.Error(), 500)
+		return
+	}
+	w.Write([]byte("Reloaded ads from JSON"))
+}
 
-// requireAuth protects endpoints with API token
+// ---------- Auth Middleware ----------
+
 func requireAuth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		token := os.Getenv(apiTokenEnvVar)
 		if token == "" {
-			http.Error(w, "server misconfigured: missing ADSERVER_API_TOKEN", http.StatusInternalServerError)
+			http.Error(w, "missing API token", 500)
 			return
 		}
-
 		authHeader := r.Header.Get("Authorization")
 		if !strings.HasPrefix(authHeader, "Bearer ") || strings.TrimPrefix(authHeader, "Bearer ") != token {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			http.Error(w, "unauthorized", 401)
 			return
 		}
-
 		next.ServeHTTP(w, r)
 	}
-}
-
-// withCORS allows certain origins for GET requests
-func withCORS(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		origin := r.Header.Get("Origin")
-
-		if origin != "" && isAllowedOrigin(origin) {
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Vary", "Origin")
-		}
-
-		if r.Method == http.MethodOptions {
-			w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	}
-}
-
-func isAllowedOrigin(o string) bool {
-	for _, allowed := range allowedOrigins {
-		if strings.EqualFold(o, allowed) {
-			return true
-		}
-	}
-	return false
 }
 
 // ---------- Handlers ----------
 
-func handleReloadAds(w http.ResponseWriter, r *http.Request) {
-	if err := loadAds(); err != nil {
-		http.Error(w, "failed to reload ads: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.Write([]byte("reloaded ads"))
-}
-
-func handleAddAd(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "use POST", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var newAd Ad
-	if err := json.NewDecoder(r.Body).Decode(&newAd); err != nil {
-		http.Error(w, "invalid JSON", http.StatusBadRequest)
-		return
-	}
-
-	if newAd.ID == "" {
-		newAd.ID = fmt.Sprintf("%d", rand.Int())
-	}
-
-	mu.Lock()
-	ads = append(ads, newAd)
-	mu.Unlock()
-
-	if err := saveAds(); err != nil {
-		http.Error(w, "failed to save ad", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "id": newAd.ID})
-}
-
+// /api/ad/random?preferences=a,b,c
 func handleRandomAd(w http.ResponseWriter, r *http.Request) {
-	prefsParam := r.URL.Query().Get("preferences")
 	prefs := []string{}
-	if prefsParam != "" {
-		prefs = strings.Split(prefsParam, ",")
+	if q := r.URL.Query().Get("preferences"); q != "" {
+		prefs = strings.Split(q, ",")
 	}
 
-	mu.RLock()
-	defer mu.RUnlock()
+	query := "SELECT id, type, content, image_url, redirect_url, tags, expires_at FROM ads"
+	rows, err := db.Query(query)
+	if err != nil {
+		http.Error(w, err.Error(), 500)
+		return
+	}
+	defer rows.Close()
 
-	var filtered []Ad
-	if len(prefs) > 0 {
-		for _, ad := range ads {
-			if anyMatch(ad.Tags, prefs) {
-				filtered = append(filtered, ad)
+	var available []Ad
+	now := time.Now()
+	for rows.Next() {
+		var ad Ad
+		var tagsStr, expStr sql.NullString
+		if err := rows.Scan(&ad.ID, &ad.Type, &ad.Content, &ad.ImageURL, &ad.RedirectURL, &tagsStr, &expStr); err != nil {
+			continue
+		}
+
+		if expStr.Valid {
+			t, err := time.Parse(time.RFC3339, expStr.String)
+			if err == nil && t.Before(now) {
+				continue // expired
 			}
+		}
+
+		if tagsStr.Valid {
+			json.Unmarshal([]byte(tagsStr.String), &ad.Tags)
+		}
+
+		if len(prefs) == 0 || anyMatch(ad.Tags, prefs) {
+			available = append(available, ad)
 		}
 	}
 
-	var pool []Ad
-	if len(filtered) > 0 {
-		pool = filtered
-	} else {
-		pool = ads
-	}
-
-	if len(pool) == 0 {
-		http.Error(w, "no ads available", http.StatusNotFound)
+	if len(available) == 0 {
+		http.Error(w, "no ads available", 404)
 		return
 	}
 
-	ad := pool[rand.Intn(len(pool))]
-
+	ad := available[rand.Intn(len(available))]
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(ad)
 }
 
+// /api/ad/add
+func handleAddAd(w http.ResponseWriter, r *http.Request) {
+	var ad Ad
+	if err := json.NewDecoder(r.Body).Decode(&ad); err != nil {
+		http.Error(w, "invalid JSON", 400)
+		return
+	}
+
+	tagsJSON, _ := json.Marshal(ad.Tags)
+	var exp *string
+	if !ad.ExpiresAt.IsZero() {
+		formatted := ad.ExpiresAt.Format(time.RFC3339)
+		exp = &formatted
+	}
+
+	_, err := db.Exec(`
+        INSERT INTO ads (campaign_id, type, content, image_url, redirect_url, tags, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		ad.CampaignID, ad.Type, ad.Content, ad.ImageURL, ad.RedirectURL, string(tagsJSON), exp)
+	if err != nil {
+		http.Error(w, "DB insert error: "+err.Error(), 500)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+}
+
+// /api/ad/click?id=123
+func handleAdClick(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+	if id == "" {
+		http.Error(w, "missing id", 400)
+		return
+	}
+
+	var redirectURL string
+	err := db.QueryRow("SELECT redirect_url FROM ads WHERE id = ?", id).Scan(&redirectURL)
+	if err != nil {
+		http.Error(w, "ad not found", 404)
+		return
+	}
+
+	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
+	_, _ = db.Exec("INSERT INTO impressions (ad_id, ip) VALUES (?, ?)", id, ip)
+
+	if redirectURL == "" {
+		http.Error(w, "no redirect for this ad", 404)
+		return
+	}
+	http.Redirect(w, r, redirectURL, http.StatusFound)
+}
+
+// ---------- Utils ----------
+
 func anyMatch(adTags, prefs []string) bool {
 	for _, a := range adTags {
 		for _, p := range prefs {
-			if strings.EqualFold(a, p) {
+			if strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(p)) {
 				return true
 			}
 		}
