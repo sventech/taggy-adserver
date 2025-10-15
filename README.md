@@ -4,6 +4,9 @@ Example ads server to explore how to build an efficient system.
 
 ## Usage
 
+Run development server
+`go run main.go`
+
 Add a new advert
 ```bash
 curl -X POST http://localhost:8080/api/ad/add \
