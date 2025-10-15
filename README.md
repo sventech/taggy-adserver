@@ -1,6 +1,6 @@
 # taggy adserver
 
-Simple, privacy-preserving ads server based on explicit user preferences
+Simple, privacy-preserving ads server with targeting based on explicit user preferences
 
 ## Usage
 
@@ -53,3 +53,30 @@ curl -X POST http://localhost:8080/api/ad/add \
 | `/api/ad/add`    | POST   | Add a new ad                              | ✅ Token required | ❌ No         |
 | `/api/ad/reload` | GET    | Reload ads from disk                      | ✅ Token required | ✅ Restricted |
 
+
+## Usage
+
+Example usage:
+```html
+<div id="ad-slot"></div>
+<script>
+(async () => {
+  try {
+    const prefs = ['organic', 'fair-trade']; // customize
+    const url = 'https://your-adserver.com/api/ad/random?preferences=' + prefs.join(',');
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('Ad fetch failed');
+    const ad = await res.json();
+
+    const slot = document.getElementById('ad-slot');
+    if (ad.type === 'text') {
+      slot.innerHTML = `<div style="padding:10px;background:#f8f8f8;border-radius:6px;">${ad.content}</div>`;
+    } else if (ad.type === 'image') {
+      slot.innerHTML = `<a href="#"><img src="${ad.image_url}" style="max-width:100%;border-radius:6px;"/></a>`;
+    }
+  } catch (err) {
+    console.error('Ad load error:', err);
+  }
+})();
+</script>
+```

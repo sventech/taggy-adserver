@@ -12,6 +12,12 @@ import (
 	"time"
 )
 
+// Configuration
+const (
+	adsFile        = "ads.json"
+	apiTokenEnvVar = "ADSERVER_API_TOKEN"
+)
+
 // Ad represents one advertisement
 type Ad struct {
 	ID       string   `json:"id"`
@@ -22,10 +28,16 @@ type Ad struct {
 }
 
 var (
-	adsFile = "ads.json"
-	ads     []Ad
-	mu      sync.RWMutex
+	ads []Ad
+	mu  sync.RWMutex
 )
+
+// Allowed origins for GET requests
+var allowedOrigins = []string{
+	"https://your-frontend-site.com",
+	"https://partner1.com",
+	"http://localhost:8000",
+}
 
 func main() {
 	rand.Seed(time.Now().UnixNano())
@@ -34,16 +46,17 @@ func main() {
 		log.Fatalf("failed to load ads: %v", err)
 	}
 
-	http.HandleFunc("/api/ad/random", handleRandomAd)
-	http.HandleFunc("/api/ad/add", handleAddAd)
-	http.HandleFunc("/api/ad/reload", handleReloadAds)
+	http.HandleFunc("/api/ad/random", withCORS(handleRandomAd))
+	http.HandleFunc("/api/ad/add", requireAuth(handleAddAd))
+	http.HandleFunc("/api/ad/reload", requireAuth(withCORS(handleReloadAds)))
 
 	addr := ":8080"
 	fmt.Printf("Ad server running on http://localhost%s\n", addr)
 	log.Fatal(http.ListenAndServe(addr, nil))
 }
 
-// loadAds reads ads from ads.json
+// ---------- Core logic ----------
+
 func loadAds() error {
 	mu.Lock()
 	defer mu.Unlock()
@@ -64,7 +77,6 @@ func loadAds() error {
 	return nil
 }
 
-// saveAds writes ads to ads.json
 func saveAds() error {
 	mu.RLock()
 	defer mu.RUnlock()
@@ -77,7 +89,59 @@ func saveAds() error {
 	return os.WriteFile(adsFile, data, 0644)
 }
 
-// handleReloadAds reloads ads.json from disk (for easy updates)
+// ---------- Middleware ----------
+
+// requireAuth protects endpoints with API token
+func requireAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		token := os.Getenv(apiTokenEnvVar)
+		if token == "" {
+			http.Error(w, "server misconfigured: missing ADSERVER_API_TOKEN", http.StatusInternalServerError)
+			return
+		}
+
+		authHeader := r.Header.Get("Authorization")
+		if !strings.HasPrefix(authHeader, "Bearer ") || strings.TrimPrefix(authHeader, "Bearer ") != token {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	}
+}
+
+// withCORS allows certain origins for GET requests
+func withCORS(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+
+		if origin != "" && isAllowedOrigin(origin) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
+
+		if r.Method == http.MethodOptions {
+			w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	}
+}
+
+func isAllowedOrigin(o string) bool {
+	for _, allowed := range allowedOrigins {
+		if strings.EqualFold(o, allowed) {
+			return true
+		}
+	}
+	return false
+}
+
+// ---------- Handlers ----------
+
 func handleReloadAds(w http.ResponseWriter, r *http.Request) {
 	if err := loadAds(); err != nil {
 		http.Error(w, "failed to reload ads: "+err.Error(), http.StatusInternalServerError)
@@ -86,7 +150,6 @@ func handleReloadAds(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte("reloaded ads"))
 }
 
-// handleAddAd allows adding new ads via POST (JSON)
 func handleAddAd(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "use POST", http.StatusMethodNotAllowed)
@@ -116,7 +179,6 @@ func handleAddAd(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{"status": "ok", "id": newAd.ID})
 }
 
-// handleRandomAd returns a random ad, possibly filtered by ?preferences=
 func handleRandomAd(w http.ResponseWriter, r *http.Request) {
 	prefsParam := r.URL.Query().Get("preferences")
 	prefs := []string{}
@@ -140,7 +202,7 @@ func handleRandomAd(w http.ResponseWriter, r *http.Request) {
 	if len(filtered) > 0 {
 		pool = filtered
 	} else {
-		pool = ads // fallback: serve any ad
+		pool = ads
 	}
 
 	if len(pool) == 0 {
@@ -154,7 +216,6 @@ func handleRandomAd(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(ad)
 }
 
-// anyMatch checks if any tag in adTags is in prefs
 func anyMatch(adTags, prefs []string) bool {
 	for _, a := range adTags {
 		for _, p := range prefs {
