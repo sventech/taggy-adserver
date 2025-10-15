@@ -1,3 +1,3 @@
-module truthiest-adserver
+module taggy-adserver
 
 go 1.25.2

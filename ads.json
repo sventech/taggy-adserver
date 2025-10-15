@@ -1,0 +1,21 @@
+[
+  {
+    "id": "1",
+    "type": "text",
+    "content": "Try our Go microframework today!",
+    "tags": ["developer", "go", "backend"]
+  },
+  {
+    "id": "2",
+    "type": "image",
+    "content": "",
+    "image_url": "https://cdn.example.com/ads/coffee-banner.jpg",
+    "tags": ["vegan", "soy-free", "coffee"]
+  },
+  {
+    "id": "3",
+    "type": "text",
+    "content": "Ethically sourced clothing for modern humans.",
+    "tags": ["organic", "fair-trade", "woman-owned"]
+  }
+]

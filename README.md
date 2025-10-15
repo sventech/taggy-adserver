@@ -1,17 +1,17 @@
-# truthiest adserver
+# taggy adserver
 
-Example ads server to explore how to build an efficient system.
+Simple, privacy-preserving ads server based on explicit user preferences
 
 ## Usage
 
 Run development server
 `go run main.go`
 
-Add a new advert
+Add a new advert (image-based)
 ```bash
 curl -X POST http://localhost:8080/api/ad/add \
      -H "Content-Type: application/json" \
-     -d '{"type": "image", "image_url": "image1.png"}'
+     -d '{"type":"image","image_url":"https://cdn.example.com/ads/newbanner.png","tags":["vegan","organic"]}'
 ```
 Example output: `{"id":"8075167432580373727","status":"ok"}`
 
@@ -25,4 +25,31 @@ Text ad example:
 
 Image ad example:
 `{"id":"3","type":"image","image_url":"/ads/image1.jpg"}`
+
+Get an ad for organic or fair-trade preferences:
+`curl "http://localhost:8080/api/ad/random?preferences=organic,fair-trade"`
+
+Example output:
+```json
+{
+  "id": "3",
+  "type": "text",
+  "content": "Ethically sourced clothing for modern humans.",
+  "tags": ["organic", "fair-trade", "woman-owned"]
+}
+```
+
+Images in CDN
+```bash
+curl -X POST http://localhost:8080/api/ad/add \
+     -H "Content-Type: application/json" \
+     -d '{"type":"image","image_url":"https://cdn.example.com/ads/newbanner.png","tags":["vegan","organic"]}'
+```
+
+## authz / CORS
+| Endpoint         | Method | Description                               | Auth             | CORS         |
+| ---------------- | ------ | ----------------------------------------- | ---------------- | ------------ |
+| `/api/ad/random` | GET    | Returns a random (optionally targeted) ad | ❌ No             | ✅ Restricted |
+| `/api/ad/add`    | POST   | Add a new ad                              | ✅ Token required | ❌ No         |
+| `/api/ad/reload` | GET    | Reload ads from disk                      | ✅ Token required | ✅ Restricted |
 
