@@ -3,291 +3,267 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
-	"fmt"
+	"io"
 	"log"
 	"math/rand"
-	"net"
 	"net/http"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
 )
 
-// Config
-const (
-	dbFile         = "ads.db"
-	adsJSONFile    = "ads.json"
-	apiTokenEnvVar = "ADSERVER_API_TOKEN"
-)
-
-var (
-	db *sql.DB
-	mu sync.Mutex
-)
-
-// Ad struct for JSON import/export
 type Ad struct {
-	ID          int       `json:"id,omitempty"`
-	CampaignID  int       `json:"campaign_id,omitempty"`
+	ID          int       `json:"id"`
 	Type        string    `json:"type"`
 	Content     string    `json:"content,omitempty"`
 	ImageURL    string    `json:"image_url,omitempty"`
 	RedirectURL string    `json:"redirect_url,omitempty"`
-	Tags        []string  `json:"tags,omitempty"`
+	Preferences []string  `json:"preferences,omitempty"`
+	CampaignID  int       `json:"campaign_id,omitempty"`
 	ExpiresAt   time.Time `json:"expires_at,omitempty"`
 }
 
+type Campaign struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+// Config
+const (
+	dbFile          = "ads.db"
+	preloadJSONFile = "ads.json"
+	apiTokenEnvVar  = "ADSERVER_API_TOKEN"
+)
+
+var (
+	db             *sql.DB
+	allowedOrigins = []string{"https://customer1.com", "https://partner.example.com"}
+	apiToken       = strings.TrimSpace(os.Getenv(apiTokenEnvVar))
+)
+
 func main() {
 	rand.Seed(time.Now().UnixNano())
-	var err error
 
-	// Initialize DB
+	var err error
 	db, err = sql.Open("sqlite3", dbFile)
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer db.Close()
 
-	if err := initDB(); err != nil {
-		log.Fatalf("DB init error: %v", err)
-	}
+	createTables()
+	loadAdsFromJSON(preloadJSONFile)
 
-	// Load ads from JSON if provided
-	if _, err := os.Stat(adsJSONFile); err == nil {
-		if err := loadAdsFromJSON(); err != nil {
-			log.Printf("Warning: could not import ads.json: %v", err)
-		}
-	}
-
-	http.HandleFunc("/api/ad/random", handleRandomAd)
-	http.HandleFunc("/api/ad/add", requireAuth(handleAddAd))
-	http.HandleFunc("/api/ad/click", handleAdClick)
-	http.HandleFunc("/api/ad/reload", requireAuth(handleReloadFromJSON))
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/ad/random", withCORS(handleRandomAd))
+	mux.HandleFunc("/api/ad/add", withAuth(handleAddAd))
+	mux.HandleFunc("/api/redirect/", handleRedirect)
+	mux.HandleFunc("/api/analytics/impressions", withAuth(handleAnalytics))
 
 	addr := ":8080"
-	fmt.Printf("Ad server running on http://localhost%s\n", addr)
-	log.Fatal(http.ListenAndServe(addr, nil))
+	log.Printf("Ad server running on http://localhost%s\n", addr)
+	log.Fatal(http.ListenAndServe(addr, mux))
 }
 
-// ---------- DB Setup ----------
+// TODO: move to golang-migrate or similar
+func createTables() {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS campaigns (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT
+        )`,
+		`CREATE TABLE IF NOT EXISTS ads (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            type TEXT,
+            content TEXT,
+            image_url TEXT,
+            redirect_url TEXT,
+            preferences TEXT,
+            campaign_id INTEGER,
+            expires_at DATETIME
+        )`,
+		`CREATE TABLE IF NOT EXISTS impressions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ad_id INTEGER,
+            ip TEXT,
+            user_agent TEXT,
+            timestamp DATETIME
+        )`,
+	}
 
-func initDB() error {
-	schema := `
-CREATE TABLE IF NOT EXISTS campaigns (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS ads (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    campaign_id INTEGER REFERENCES campaigns(id),
-    type TEXT,
-    content TEXT,
-    image_url TEXT,
-    redirect_url TEXT,
-    tags TEXT,
-    expires_at DATETIME
-);
-
-CREATE TABLE IF NOT EXISTS impressions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    ad_id INTEGER REFERENCES ads(id),
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    ip TEXT
-);
-`
-	_, err := db.Exec(schema)
-	return err
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			log.Fatalf("DB init error: %v", err)
+		}
+	}
 }
 
-// ---------- JSON import ----------
-
-func loadAdsFromJSON() error {
-	f, err := os.Open(adsJSONFile)
+func loadAdsFromJSON(filename string) {
+	f, err := os.Open(filename)
 	if err != nil {
-		return err
+		log.Println("No JSON preload file found, skipping:", err)
+		return
 	}
 	defer f.Close()
 
 	var ads []Ad
 	if err := json.NewDecoder(f).Decode(&ads); err != nil {
-		return err
-	}
-
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-
-	stmt, err := tx.Prepare(`
-        INSERT INTO ads (campaign_id, type, content, image_url, redirect_url, tags, expires_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    `)
-	if err != nil {
-		return err
-	}
-	defer stmt.Close()
-
-	for _, ad := range ads {
-		tagsJSON, _ := json.Marshal(ad.Tags)
-		var exp *string
-		if !ad.ExpiresAt.IsZero() {
-			formatted := ad.ExpiresAt.Format(time.RFC3339)
-			exp = &formatted
-		}
-		_, err := stmt.Exec(ad.CampaignID, ad.Type, ad.Content, ad.ImageURL, ad.RedirectURL, string(tagsJSON), exp)
-		if err != nil {
-			log.Printf("Failed to import ad: %v", err)
-		}
-	}
-
-	return tx.Commit()
-}
-
-func handleReloadFromJSON(w http.ResponseWriter, r *http.Request) {
-	if err := loadAdsFromJSON(); err != nil {
-		http.Error(w, "reload failed: "+err.Error(), 500)
+		log.Println("Invalid JSON preload:", err)
 		return
 	}
-	w.Write([]byte("Reloaded ads from JSON"))
-}
 
-// ---------- Auth Middleware ----------
-
-func requireAuth(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		token := os.Getenv(apiTokenEnvVar)
-		if token == "" {
-			http.Error(w, "missing API token", 500)
-			return
-		}
-		authHeader := r.Header.Get("Authorization")
-		if !strings.HasPrefix(authHeader, "Bearer ") || strings.TrimPrefix(authHeader, "Bearer ") != token {
-			http.Error(w, "unauthorized", 401)
-			return
-		}
-		next.ServeHTTP(w, r)
+	for _, ad := range ads {
+		insertAd(ad)
 	}
 }
 
-// ---------- Handlers ----------
-
-// /api/ad/random?preferences=a,b,c
-func handleRandomAd(w http.ResponseWriter, r *http.Request) {
-	prefs := []string{}
-	if q := r.URL.Query().Get("preferences"); q != "" {
-		prefs = strings.Split(q, ",")
-	}
-
-	query := "SELECT id, type, content, image_url, redirect_url, tags, expires_at FROM ads"
-	rows, err := db.Query(query)
+func insertAd(ad Ad) {
+	prefs := strings.Join(ad.Preferences, ",")
+	_, err := db.Exec(`INSERT INTO ads (type, content, image_url, redirect_url, preferences, campaign_id, expires_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		ad.Type, ad.Content, ad.ImageURL, ad.RedirectURL, prefs, ad.CampaignID, ad.ExpiresAt)
 	if err != nil {
-		http.Error(w, err.Error(), 500)
+		log.Println("Insert failed:", err)
+	}
+}
+
+// === HANDLERS ===
+
+func handleRandomAd(w http.ResponseWriter, r *http.Request) {
+	preferences := strings.Split(r.URL.Query().Get("preferences"), ",")
+
+	query := `SELECT id, type, content, image_url, redirect_url, preferences FROM ads WHERE expires_at IS NULL OR expires_at > ?`
+	rows, err := db.Query(query, time.Now())
+	if err != nil {
+		http.Error(w, "db error", 500)
 		return
 	}
 	defer rows.Close()
 
-	var available []Ad
-	now := time.Now()
+	var candidates []Ad
 	for rows.Next() {
-		var ad Ad
-		var tagsStr, expStr sql.NullString
-		if err := rows.Scan(&ad.ID, &ad.Type, &ad.Content, &ad.ImageURL, &ad.RedirectURL, &tagsStr, &expStr); err != nil {
-			continue
-		}
-
-		if expStr.Valid {
-			t, err := time.Parse(time.RFC3339, expStr.String)
-			if err == nil && t.Before(now) {
-				continue // expired
-			}
-		}
-
-		if tagsStr.Valid {
-			json.Unmarshal([]byte(tagsStr.String), &ad.Tags)
-		}
-
-		if len(prefs) == 0 || anyMatch(ad.Tags, prefs) {
-			available = append(available, ad)
+		var a Ad
+		var prefs string
+		rows.Scan(&a.ID, &a.Type, &a.Content, &a.ImageURL, &a.RedirectURL, &prefs)
+		a.Preferences = strings.Split(prefs, ",")
+		if matchesPreferences(a.Preferences, preferences) {
+			candidates = append(candidates, a)
 		}
 	}
 
-	if len(available) == 0 {
-		http.Error(w, "no ads available", 404)
+	if len(candidates) == 0 {
+		http.Error(w, "no ads available", http.StatusNotFound)
 		return
 	}
 
-	ad := available[rand.Intn(len(available))]
+	ad := candidates[rand.Intn(len(candidates))]
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(ad)
 }
 
-// /api/ad/add
-func handleAddAd(w http.ResponseWriter, r *http.Request) {
-	var ad Ad
-	if err := json.NewDecoder(r.Body).Decode(&ad); err != nil {
-		http.Error(w, "invalid JSON", 400)
-		return
+func matchesPreferences(adPrefs, userPrefs []string) bool {
+	if len(userPrefs) == 0 || (len(userPrefs) == 1 && userPrefs[0] == "") {
+		return true
 	}
-
-	tagsJSON, _ := json.Marshal(ad.Tags)
-	var exp *string
-	if !ad.ExpiresAt.IsZero() {
-		formatted := ad.ExpiresAt.Format(time.RFC3339)
-		exp = &formatted
+	for _, up := range userPrefs {
+		for _, ap := range adPrefs {
+			if strings.EqualFold(strings.TrimSpace(up), strings.TrimSpace(ap)) {
+				return true
+			}
+		}
 	}
-
-	_, err := db.Exec(`
-        INSERT INTO ads (campaign_id, type, content, image_url, redirect_url, tags, expires_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		ad.CampaignID, ad.Type, ad.Content, ad.ImageURL, ad.RedirectURL, string(tagsJSON), exp)
-	if err != nil {
-		http.Error(w, "DB insert error: "+err.Error(), 500)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	return false
 }
 
-// /api/ad/click?id=123
-func handleAdClick(w http.ResponseWriter, r *http.Request) {
-	id := r.URL.Query().Get("id")
-	if id == "" {
-		http.Error(w, "missing id", 400)
+func handleAddAd(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "use POST", http.StatusMethodNotAllowed)
 		return
 	}
 
+	var ad Ad
+	if err := json.NewDecoder(r.Body).Decode(&ad); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	insertAd(ad)
+	w.WriteHeader(http.StatusCreated)
+	io.WriteString(w, `{"status":"ok"}`)
+}
+
+// Redirect and log impression
+func handleRedirect(w http.ResponseWriter, r *http.Request) {
+	idStr := strings.TrimPrefix(r.URL.Path, "/api/redirect/")
 	var redirectURL string
-	err := db.QueryRow("SELECT redirect_url FROM ads WHERE id = ?", id).Scan(&redirectURL)
+	err := db.QueryRow("SELECT redirect_url FROM ads WHERE id = ?", idStr).Scan(&redirectURL)
 	if err != nil {
 		http.Error(w, "ad not found", 404)
 		return
 	}
 
-	ip, _, _ := net.SplitHostPort(r.RemoteAddr)
-	_, _ = db.Exec("INSERT INTO impressions (ad_id, ip) VALUES (?, ?)", id, ip)
+	_, _ = db.Exec("INSERT INTO impressions (ad_id, ip, user_agent, timestamp) VALUES (?, ?, ?, ?)",
+		idStr, r.RemoteAddr, r.UserAgent(), time.Now())
 
-	if redirectURL == "" {
-		http.Error(w, "no redirect for this ad", 404)
-		return
-	}
 	http.Redirect(w, r, redirectURL, http.StatusFound)
 }
 
-// ---------- Utils ----------
+// Analytics endpoint (requires token)
+func handleAnalytics(w http.ResponseWriter, r *http.Request) {
+	rows, err := db.Query(`SELECT ad_id, COUNT(*) FROM impressions GROUP BY ad_id`)
+	if err != nil {
+		http.Error(w, "db error", 500)
+		return
+	}
+	defer rows.Close()
 
-func anyMatch(adTags, prefs []string) bool {
-	for _, a := range adTags {
-		for _, p := range prefs {
-			if strings.EqualFold(strings.TrimSpace(a), strings.TrimSpace(p)) {
-				return true
-			}
+	stats := make(map[int]int)
+	var id, count int
+	for rows.Next() {
+		rows.Scan(&id, &count)
+		stats[id] = count
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(stats)
+}
+
+// === MIDDLEWARE ===
+
+func withAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// FIXME: exit server earlier if no token?
+		if apiToken == "" {
+			http.Error(w, "missing API token", http.StatusInternalServerError)
+			return
+		}
+		authHeader := r.Header.Get("Authorization")
+		if !strings.HasPrefix(authHeader, "Bearer ") || strings.TrimPrefix(authHeader, "Bearer ") != apiToken {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		// FIXME: just next?
+		next(w, r)
+	}
+}
+
+func withCORS(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+		if isAllowedOrigin(origin) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
+		next(w, r)
+	}
+}
+
+func isAllowedOrigin(origin string) bool {
+	for _, allowed := range allowedOrigins {
+		if origin == allowed {
+			return true
 		}
 	}
 	return false

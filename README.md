@@ -5,13 +5,17 @@ Simple, privacy-preserving ads server with targeting based on explicit user pref
 ## Usage
 
 Run development server
-`go run main.go`
+```bash
+ADSERVER_API_TOKEN=mysecret \
+go run main.go
+```
 
 Add a new advert (image-based)
 ```bash
 curl -X POST http://localhost:8080/api/ad/add \
-     -H "Content-Type: application/json" \
-     -d '{"type":"image","image_url":"https://cdn.example.com/ads/newbanner.png","tags":["vegan","organic"]}'
+  -H "Authorization: Bearer mysecret" \
+  -H "Content-Type: application/json" \
+  -d '{"campaign_id":1,"type":"image","image_url":"https://cdn.example.com/ads/banner.jpg","redirect_url":"https://example.com/landing","tags":["organic","fair-trade"],"expires_at":"2025-12-31T23:59:59Z"}'
 ```
 Example output: `{"id":"8075167432580373727","status":"ok"}`
 
@@ -27,7 +31,7 @@ Image ad example:
 `{"id":"3","type":"image","image_url":"/ads/image1.jpg"}`
 
 Get an ad for organic or fair-trade preferences:
-`curl "http://localhost:8080/api/ad/random?preferences=organic,fair-trade"`
+`curl "http://localhost:8080/api/ad/random?preferences=organic,fair-trade,patriotic"`
 
 Example output:
 ```json
@@ -80,3 +84,6 @@ Example usage:
 })();
 </script>
 ```
+
+Example click / redirect:
+`curl -v "http://localhost:8080/api/ad/click?id=2"`
