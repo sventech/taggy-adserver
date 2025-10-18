@@ -12,7 +12,7 @@
     "campaign_id": 1,
     "ad_type": "image",
     "content": "",
-    "image_url": "https://cdn.example.com/ads/coffee-banner.jpg",
+    "image_url": "/image2.png",
     "redirect_url": "https://exaample.com/ad2",
     "tags": ["vegan", "soy-free", "coffee"]
   },

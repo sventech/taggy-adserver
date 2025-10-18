@@ -15,7 +15,7 @@ Add a new advert (image-based)
 curl -X POST http://localhost:8080/api/ad/add \
   -H "Authorization: Bearer mysecret" \
   -H "Content-Type: application/json" \
-  -d '{"campaign_id":1,"type":"image","image_url":"https://cdn.example.com/ads/banner.jpg","redirect_url":"https://example.com/landing","tags":["organic","fair-trade"],"expires_at":"2025-12-31T23:59:59Z"}'
+  -d '{"campaign_id":1,"ad_type":"image","image_url":"https://cdn.example.com/ads/banner.jpg","redirect_url":"https://example.com/landing","tags":["organic","fair-trade"],"expires_at":"2025-12-31T23:59:59Z"}'
 ```
 Example output: `{"id":"8075167432580373727","status":"ok"}`
 
@@ -51,12 +51,21 @@ curl -X POST http://localhost:8080/api/ad/add \
 ```
 
 ## authz / CORS
-| Endpoint         | Method | Description                               | Auth             | CORS         |
-| ---------------- | ------ | ----------------------------------------- | ---------------- | ------------ |
-| `/api/ad/random` | GET    | Returns a random (optionally targeted) ad | ❌ No             | ✅ Restricted |
-| `/api/ad/add`    | POST   | Add a new ad                              | ✅ Token required | ❌ No         |
-| `/api/ad/reload` | GET    | Reload ads from disk                      | ✅ Token required | ✅ Restricted |
-
+| Endpoint            | Method | Description                               | Auth             | CORS          |
+| --------------------| ------ | ----------------------------------------- | ---------------- | ------------- |
+| `/api/ad/random`    | GET    | Returns a random (optionally targeted) ad | ❌ No             | ✅ Restricted |
+| `/api/redirect`     | GET    | Get the redirect link for an ad           | ❌ No             | ✅ Restricted |
+| `/embed.js`         | GET    | Get the embed file for using ads          | ❌ No             | ✅ Restricted |
+| `/api/ads`          | GET    | List current ads                          | ✅ Token required | ❌ No         |
+| `/api/ad/add`       | POST   | Create a new ad                           | ✅ Token required | ❌ No         |
+| `/api/ad/delete`    | POST   | Delete an ad                              | ✅ Token required | ❌ No         |
+| `/api/ad/update`    | POST   | Update an ad                              | ✅ Token required | ❌ No         |
+| `/api/impression`   | POST   | Register an impression (click/view)       | ❌ No             | ✅ Restricted |
+| `/api/campaigns`    | GET    | List current campaigns                    | ✅ Token required | ✅ Restricted |
+| `/api/campaign/add` | POST   | Create a new campaign                     | ✅ Token required | ✅ Restricted |
+| `/api/analytics/stats` | GET | Get analytics about the current ads       | ✅ Token required | ✅ Restricted |
+| `/admin`            | N/A    | Admin; manage ads &amp; campaigns         | ✅ Token required | ✅ Restricted |
+| `/api/upload`       | POST   | Upload a file (generally an image)        | ✅ Token required | ✅ Restricted |
 
 ## Usage
 
@@ -86,4 +95,4 @@ Example usage:
 ```
 
 Example click / redirect:
-`curl -v "http://localhost:8080/api/ad/click?id=2"`
+`curl -v "http://localhost:8080/api/impression/2"`
