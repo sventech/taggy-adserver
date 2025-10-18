@@ -613,8 +613,8 @@ func handleAnalyticsStats(w http.ResponseWriter, r *http.Request) {
 			a.content,
 			a.image_url,
 			a.campaign_id,
-			COALESCE(SUM(CASE WHEN a.ad_type = 'view' THEN 1 ELSE 0 END), 0) as views,
-			COALESCE(SUM(CASE WHEN a.ad_type = 'click' THEN 1 ELSE 0 END), 0) as clicks
+			COALESCE(SUM(CASE WHEN i.action_type = 'view' THEN 1 ELSE 0 END), 0) as views,
+			COALESCE(SUM(CASE WHEN i.action_type = 'click' THEN 1 ELSE 0 END), 0) as clicks
 		FROM ads a
 		LEFT JOIN impressions i ON a.id = i.ad_id
 		GROUP BY a.id
