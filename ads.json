@@ -2,7 +2,7 @@
   {
     "id": 1,
     "campaign_id": 1,
-    "type": "text",
+    "ad_type": "text",
     "content": "Try our Go microframework today!",
     "redirect_url": "https://exaample.com/ad1",
     "tags": ["developer", "go", "backend"]
@@ -10,7 +10,7 @@
   {
     "id": 2,
     "campaign_id": 1,
-    "type": "image",
+    "ad_type": "image",
     "content": "",
     "image_url": "https://cdn.example.com/ads/coffee-banner.jpg",
     "redirect_url": "https://exaample.com/ad2",
@@ -19,7 +19,7 @@
   {
     "id": 3,
     "campaign_id": 1,
-    "type": "text",
+    "ad_type": "text",
     "content": "Ethically sourced clothing for modern humans.",
     "redirect_url": "https://exaample.com/ad3",
     "tags": ["organic", "fair-trade", "woman-owned"],
@@ -27,8 +27,9 @@
   },
   {
     "id": 4,
-    "type": "text",
+    "ad_type": "text",
     "content": "Go microframeworks work well with React!",
+    "redirect_url": "https://exaample.com/ad4",
     "tags": ["developer", "go", "frontend"]
   }
 ]

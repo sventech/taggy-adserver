@@ -392,7 +392,7 @@
 
         function loadOverview() {
             apiRequest('/api/ads').then(ads => {
-                ads = ads || [];
+                ads = ads === null ? [] : ads;
                 const active = ads.filter(a => !a.expires_at || new Date(a.expires_at) > new Date());
                 document.getElementById('totalAds').textContent = ads.length ? ads.length : '0';
                 document.getElementById('activeAds').textContent = active.length ? active.length : '0';
@@ -410,6 +410,7 @@
 
         function loadAds() {
             apiRequest('/api/ads').then(ads => {
+                ads = ads === null ? [] : ads;
                 const tbody = document.getElementById('adsTableBody');
                 if (ads.length === 0) {
                     tbody.innerHTML = '<tr><td colspan="7" style="text-align: center; color: #999;">No ads yet</td></tr>';
@@ -442,6 +443,8 @@
         function loadCampaigns() {
             apiRequest('/api/campaigns').then(campaigns => {
                 apiRequest('/api/ads').then(ads => {
+                    campaigns = campaigns === null ? [] : campaigns;
+                    ads = ads === null ? [] : ads;
                     const tbody = document.getElementById('campaignsTableBody');
                     if (campaigns.length === 0) {
                         tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: #999;">No campaigns yet</td></tr>';

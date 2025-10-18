@@ -1,0 +1,18 @@
+[
+    {
+        "id": 1,
+        "ad_id": 1,
+        "action_type": "view",
+        "ip": "192.168.1.1",
+        "user_agent": "Mozilla/5.0...",
+        "viewed_at": "2025-10-01T12:00:00Z"
+    },
+    {
+        "id": 2,
+        "ad_id": 2,
+        "action_type": "click",
+        "ip": "192.168.1.2",
+        "user_agent": "Mozilla/5.0...",
+        "viewed_at": "2025-10-01T12:05:00Z"
+    }
+]

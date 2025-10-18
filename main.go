@@ -55,22 +55,23 @@ type AnalyticsStats struct {
 
 // Config
 const (
-	dbFile          = "ads.db"
-	preloadJSONFile = "ads.json"
-	apiTokenEnvVar  = "ADSERVER_API_TOKEN"
-	uploadDir       = "./static/images"
-	maxUploadSize   = 10 << 20 // 10MB
+	dbFile             = "ads.db"
+	preloadJSONFile    = "ads.json"
+	preloadCampaigns   = "campaigns.json"
+	preloadImpressions = "impressions.json"
+	apiTokenEnvVar     = "ADSERVER_API_TOKEN"
+	uploadDir          = "./static/images"
+	maxUploadSize      = 10 << 20 // 10MB
 )
 
 var (
-	db             *sql.DB
-	allowedOrigins = []string{"*"} // Use specific origins in production
+	db *sql.DB
+	// Allow all origins for development (restrict in production)
+	allowedOrigins = []string{"*"}
 	apiToken       string
 )
 
 func main() {
-	rand.Seed(time.Now().UnixNano())
-
 	// Validate API token on startup
 	apiToken = strings.TrimSpace(os.Getenv(apiTokenEnvVar))
 	if apiToken == "" {
@@ -90,7 +91,9 @@ func main() {
 	defer db.Close()
 
 	createTables()
+	loadCampaignsFromJSON(preloadCampaigns)
 	loadAdsFromJSON(preloadJSONFile)
+	loadImpressionsFromJSON(preloadImpressions)
 
 	mux := http.NewServeMux()
 
@@ -192,6 +195,63 @@ func loadAdsFromJSON(filename string) {
 	log.Printf("Loaded %d ads from %s", len(ads), filename)
 }
 
+func loadCampaignsFromJSON(filename string) {
+	f, err := os.Open(filename)
+	if err != nil {
+		log.Println("No campaigns JSON file found, skipping.")
+		return
+	}
+	defer f.Close()
+
+	var campaigns []Campaign
+	if err := json.NewDecoder(f).Decode(&campaigns); err != nil {
+		log.Printf("Invalid campaigns JSON: %v", err)
+		return
+	}
+
+	for _, c := range campaigns {
+		if c.Name == "" {
+			log.Printf("Skipping invalid campaign with empty name")
+			continue
+		}
+		_, err := db.Exec(`INSERT INTO campaigns (name) VALUES (?)`, c.Name)
+		if err != nil {
+			log.Printf("Failed to insert campaign %s: %v", c.Name, err)
+			continue
+		}
+	}
+	log.Printf("Loaded %d campaigns from %s", len(campaigns), filename)
+}
+
+func loadImpressionsFromJSON(filename string) {
+	f, err := os.Open(filename)
+	if err != nil {
+		log.Println("No impressions JSON file found, skipping.")
+		return
+	}
+	defer f.Close()
+
+	var impressions []Impression
+	if err := json.NewDecoder(f).Decode(&impressions); err != nil {
+		log.Printf("Invalid impressions JSON: %v", err)
+		return
+	}
+
+	for _, imp := range impressions {
+		if imp.AdID == 0 || (imp.ActionType != "view" && imp.ActionType != "click") {
+			log.Printf("Skipping invalid impression: %+v", imp)
+			continue
+		}
+		_, err := db.Exec(`INSERT INTO impressions (ad_id, action_type, ip, user_agent, viewed_at) VALUES (?, ?, ?, ?, ?)`,
+			imp.AdID, imp.ActionType, imp.IP, imp.UserAgent, imp.ViewedAt)
+		if err != nil {
+			log.Printf("Failed to insert impression for ad %d: %v", imp.AdID, err)
+			continue
+		}
+	}
+	log.Printf("Loaded %d impressions from %s", len(impressions), filename)
+}
+
 func validateAd(ad Ad) error {
 	if ad.AdType != "text" && ad.AdType != "image" {
 		return fmt.Errorf("invalid ad_type: %s", ad.AdType)
@@ -210,14 +270,14 @@ func validateAd(ad Ad) error {
 
 func insertAd(ad Ad) error {
 	tags := strings.Join(ad.Tags, ",")
-	// var expiresAt interface{}
-	// if ad.ExpiresAt != nil {
-	// 	expiresAt = *ad.ExpiresAt
-	// }
+	var expiresAt interface{}
+	if ad.ExpiresAt != nil {
+		expiresAt = *ad.ExpiresAt
+	}
 
 	_, err := db.Exec(`INSERT INTO ads (ad_type, content, image_url, redirect_url, tags, campaign_id, expires_at)
                        VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		ad.AdType, ad.Content, ad.ImageURL, ad.RedirectURL, tags, ad.CampaignID, *ad.ExpiresAt)
+		ad.AdType, ad.Content, ad.ImageURL, ad.RedirectURL, tags, ad.CampaignID, expiresAt)
 	return err
 }
 
@@ -551,8 +611,8 @@ func handleAnalyticsStats(w http.ResponseWriter, r *http.Request) {
 			a.ad_type,
 			a.content,
 			a.campaign_id,
-			COALESCE(SUM(CASE WHEN i.ad_type = 'view' THEN 1 ELSE 0 END), 0) as views,
-			COALESCE(SUM(CASE WHEN i.ad_type = 'click' THEN 1 ELSE 0 END), 0) as clicks
+			COALESCE(SUM(CASE WHEN a.ad_type = 'view' THEN 1 ELSE 0 END), 0) as views,
+			COALESCE(SUM(CASE WHEN a.ad_type = 'click' THEN 1 ELSE 0 END), 0) as clicks
 		FROM ads a
 		LEFT JOIN impressions i ON a.id = i.ad_id
 		GROUP BY a.id
@@ -604,8 +664,8 @@ func handleUpload(w http.ResponseWriter, r *http.Request) {
 	defer file.Close()
 
 	// Validate file ad_type
-	contentad_type := header.Header.Get("Content-Type")
-	if !strings.HasPrefix(contentad_type, "image/") {
+	content_type := header.Header.Get("Content-Type")
+	if !strings.HasPrefix(content_type, "image/") {
 		respondJSON(w, http.StatusBadRequest, map[string]string{"error": "only images allowed"})
 		return
 	}
@@ -708,8 +768,7 @@ func withCORS(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
 
-		// Allow all origins for development (restrict in production)
-		if origin != "" {
+		if origin != "" && isAllowedOrigin(origin) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 		} else {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
@@ -726,6 +785,15 @@ func withCORS(next http.HandlerFunc) http.HandlerFunc {
 
 		next.ServeHTTP(w, r)
 	}
+}
+
+func isAllowedOrigin(o string) bool {
+	for _, allowed := range allowedOrigins {
+		if strings.EqualFold(o, allowed) {
+			return true
+		}
+	}
+	return false
 }
 
 // === HELPERS ===

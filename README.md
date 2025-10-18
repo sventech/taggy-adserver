@@ -1,6 +1,6 @@
 # taggy adserver
 
-Simple, privacy-preserving ads server with targeting based on explicit user preferences
+Simple, privacy-first advertising server with targeting based on explicit user preferences.
 
 ## Usage
 
@@ -25,10 +25,10 @@ curl http://localhost:8080/api/ad/random
 ```
 
 Text ad example:
-`{"id":"2","type":"text","content":"Super fast and lightweight backend in Go!"}`
+`{"id":"2","ad_type":"text","content":"Super fast and lightweight backend in Go!"}`
 
 Image ad example:
-`{"id":"3","type":"image","image_url":"/ads/image1.jpg"}`
+`{"id":"3","ad_type":"image","image_url":"/ads/image1.jpg"}`
 
 Get an ad for organic or fair-trade preferences:
 `curl "http://localhost:8080/api/ad/random?preferences=organic,fair-trade,patriotic"`
@@ -37,7 +37,7 @@ Example output:
 ```json
 {
   "id": "3",
-  "type": "text",
+  "ad_type": "text",
   "content": "Ethically sourced clothing for modern humans.",
   "tags": ["organic", "fair-trade", "woman-owned"]
 }
@@ -47,7 +47,7 @@ Images in CDN
 ```bash
 curl -X POST http://localhost:8080/api/ad/add \
      -H "Content-Type: application/json" \
-     -d '{"type":"image","image_url":"https://cdn.example.com/ads/newbanner.png","tags":["vegan","organic"]}'
+     -d '{"ad_type":"image","image_url":"https://cdn.example.com/ads/newbanner.png","tags":["vegan","organic"]}'
 ```
 
 ## authz / CORS
