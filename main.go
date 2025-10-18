@@ -50,6 +50,7 @@ type AnalyticsStats struct {
 	CTR        string `json:"ctr"`
 	AdType     string `json:"ad_type"`
 	AdContent  string `json:"ad_content"`
+	ImageURL   string `json:"image_url"`
 	CampaignID int    `json:"campaign_id"`
 }
 
@@ -610,6 +611,7 @@ func handleAnalyticsStats(w http.ResponseWriter, r *http.Request) {
 			a.id,
 			a.ad_type,
 			a.content,
+			a.image_url,
 			a.campaign_id,
 			COALESCE(SUM(CASE WHEN a.ad_type = 'view' THEN 1 ELSE 0 END), 0) as views,
 			COALESCE(SUM(CASE WHEN a.ad_type = 'click' THEN 1 ELSE 0 END), 0) as clicks
@@ -629,7 +631,7 @@ func handleAnalyticsStats(w http.ResponseWriter, r *http.Request) {
 	var stats []AnalyticsStats
 	for rows.Next() {
 		var s AnalyticsStats
-		rows.Scan(&s.AdID, &s.AdType, &s.AdContent, &s.CampaignID, &s.Views, &s.Clicks)
+		rows.Scan(&s.AdID, &s.AdType, &s.AdContent, &s.ImageURL, &s.CampaignID, &s.Views, &s.Clicks)
 
 		if s.Views > 0 {
 			ctr := float64(s.Clicks) / float64(s.Views) * 100
@@ -770,6 +772,7 @@ func withCORS(next http.HandlerFunc) http.HandlerFunc {
 
 		if origin != "" && isAllowedOrigin(origin) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
 		} else {
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 		}

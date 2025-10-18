@@ -419,14 +419,14 @@
 
                 tbody.innerHTML = ads.map(ad => {
                     const isExpired = ad.expires_at && new Date(ad.expires_at) < new Date();
-                    const preview = ad.type === 'text' 
+                    const preview = ad.ad_type === 'text' 
                         ? (ad.content.substring(0, 40) + (ad.content.length > 40 ? '...' : ''))
                         : `<img src="${ad.image_url}" style="max-width: 60px; max-height: 40px;">`;
                     
                     return `
                         <tr>
                             <td>${ad.id}</td>
-                            <td><span class="badge badge-${ad.type}">${ad.type}</span></td>
+                            <td><span class="badge badge-${ad.ad_type}">${ad.ad_type}</span></td>
                             <td>${preview}</td>
                             <td>${(ad.tags || []).join(', ')}</td>
                             <td>${ad.campaign_id || '-'}</td>
@@ -482,16 +482,22 @@
                     return;
                 }
 
-                tbody.innerHTML = stats.map(s => `
-                    <tr>
-                        <td>${s.ad_id}</td>
-                        <td><span class="badge badge-${s.ad_type}">${s.ad_type}</span></td>
-                        <td>${s.ad_content.substring(0, 40)}${s.ad_content.length > 40 ? '...' : ''}</td>
-                        <td>${s.views}</td>
-                        <td>${s.clicks}</td>
-                        <td><strong>${s.ctr}</strong></td>
-                    </tr>
-                `).join('');
+                tbody.innerHTML = stats.map(s => {
+                    const preview = s.ad_type === 'text' 
+                        ? (s.ad_content.substring(0, 40) + (s.ad_content.length > 40 ? '...' : ''))
+                        : `<img src="${s.image_url}" style="max-width: 60px; max-height: 40px;">`;
+
+                    return `
+                        <tr>
+                            <td>${s.ad_id}</td>
+                            <td><span class="badge badge-${s.ad_type}">${s.ad_type}</span></td>
+                            <td>${preview}</td>
+                            <td>${s.views}</td>
+                            <td>${s.clicks}</td>
+                            <td><strong>${s.ctr}</strong></td>
+                        </tr>
+                    `;
+                }).join('');
             });
         }
 
