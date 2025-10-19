@@ -1,12 +1,13 @@
 package main
 
 import (
+	"crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
-	"math/rand"
+	"math/big"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -349,7 +350,8 @@ func handleRandomAd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ad := candidates[rand.Intn(len(candidates))]
+	rand_idx, _ := rand.Int(rand.Reader, big.NewInt(int64(len(candidates))))
+	ad := candidates[rand_idx.Int64()]
 	respondJSON(w, http.StatusOK, ad)
 }
 
