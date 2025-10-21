@@ -64,7 +64,7 @@ curl -X POST http://localhost:8080/api/ad/add \
 | `/api/campaigns`    | GET    | List current campaigns                    | ✅ Token required | ✅ Restricted |
 | `/api/campaign/add` | POST   | Create a new campaign                     | ✅ Token required | ✅ Restricted |
 | `/api/analytics/stats` | GET | Get analytics about the current ads       | ✅ Token required | ✅ Restricted |
-| `/admin`            | N/A    | Admin; manage ads &amp; campaigns         | ✅ Token required | ✅ Restricted |
+| `/admin`            | -      | Admin; manage ads &amp; campaigns         | ✅ Token required | ✅ Restricted |
 | `/api/upload`       | POST   | Upload a file (generally an image)        | ✅ Token required | ✅ Restricted |
 
 ## Usage
