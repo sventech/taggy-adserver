@@ -1,6 +1,6 @@
 # Taggy AdServer (Rust)
 
-Simple, privacy-first advertising server with targeting based on explicit user preferences. Built with Rust, Actix-web, and SQLite.
+Simple, privacy-first advertising server with targeting based on explicit user preferences (via TAGS). Built with Rust, Actix-web, and SQLite.
 
 ## Features
 

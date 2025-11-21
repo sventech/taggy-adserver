@@ -3,9 +3,9 @@
     "id": 1,
     "campaign_id": 1,
     "ad_type": "text",
-    "content": "Try our Go microframework today!",
+    "content": "Try our Rust framework today!",
     "redirect_url": "https://exaample.com/ad1",
-    "tags": ["developer", "go", "backend"]
+    "tags": ["developer", "rust", "backend"]
   },
   {
     "id": 2,
@@ -28,8 +28,8 @@
   {
     "id": 4,
     "ad_type": "text",
-    "content": "Go microframeworks work well with React!",
+    "content": "Rust frameworks work well with React!",
     "redirect_url": "https://exaample.com/ad4",
-    "tags": ["developer", "go", "frontend"]
+    "tags": ["developer", "rust", "frontend"]
   }
 ]

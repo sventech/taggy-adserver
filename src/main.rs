@@ -6,7 +6,7 @@ use actix_web::{
     Result as ActixResult,
 };
 use futures_util::stream::StreamExt;
-use rand::seq::SliceRandom;
+use rand::seq::IndexedRandom;
 use serde::{Deserialize, Serialize};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool};
 use sqlx::Row;
@@ -404,7 +404,7 @@ async fn get_random_ad(
         }));
     }
 
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let ad = candidates.choose(&mut rng).unwrap();
 
     Ok(HttpResponse::Ok().json(ad))
